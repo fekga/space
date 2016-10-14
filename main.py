@@ -8,26 +8,13 @@ from ctypes import *
 #from shader import Shader
 from OpenGL.GL.shaders import *
 
+from misc import *
+
 vec2 = GLfloat * 2
 vec3 = GLfloat * 3
 vec4 = GLfloat * 4
 mat3 = GLfloat * 9
 mat4 = GLfloat * 16
-
-class Label(pyglet.text.Label):
-    def __init__(self, window,**kwargs):
-        self.window = window
-        self.window.push_handlers(self)
-        self.init_settings = dict()
-        for k,v in kwargs.items():
-            if callable(v):
-                kwargs[k] = v(self.window)
-                self.init_settings[k] = v
-        super().__init__(**kwargs)
-        
-    def on_resize(self, width, height):
-        for k,v in self.init_settings.items():
-            setattr(self,k,v(self.window))
 
 class EventLoop(pyglet.app.EventLoop):
     def idle(self):
@@ -39,9 +26,9 @@ class EventLoop(pyglet.app.EventLoop):
 
 class Camera(object):
     
-    def __init__(self, window=None):
+    def __init__(self, window):
         self.window = window
-        self.type = None
+        self.window.push_handlers(self)
     
     def perspective(self, eye=(0, 0, 1), target=(0, 0, -1), up=(0, 1, 0), fov = 45.0, near=0.1, far=100.0):
         self.fov = fov
@@ -50,43 +37,32 @@ class Camera(object):
         self.eye = eye
         self.target = target
         self.up = up
-        self.type = 'perspective'
-        self.setup()
-        
-    def orthographic(self, left=-1, right=1, bottom=-1, top=1, near=-1, far=1):
-        self.left=left
-        self.right=right
-        self.top=top
-        self.bottom=bottom
-        self.near = near
-        self.far = far
-        self.type = 'orthographic'
-        self.setup()
-
-    def _update_mvp(self):
-        pass
-
-    def setup(self):
-        if self.type == None:
-            return
         glMatrixMode(GL_PROJECTION)
         glLoadIdentity()
-        if self.type == 'orthographic':
-            glOrtho(self.left,self.right,self.bottom,self.top,self.near,self.far)
-        if self.type == 'perspective':
-            w,h = self.window.width,self.window.height
-            gluPerspective(self.fov,w/h,self.near,self.far)
+        w, h = self.width, self.height
+        gluPerspective(self.fov, w / h, self.near, self.far)
         glMatrixMode(GL_MODELVIEW)
         glLoadIdentity()
-        if self.type == 'perspective':
-            ex,ey,ez = self.eye
-            tx,ty,tz = self.target
-            ux,uy,uz = self.up
-            gluLookAt(ex,ey,ez,tx,ty,tz,ux,uy,uz)
+        ex, ey, ez = self.eye
+        tx, ty, tz = self.target
+        ux, uy, uz = self.up
+        gluLookAt(ex, ey, ez, tx, ty, tz, ux, uy, uz)
+        
+    def orthographic(self, left=-1, right=1, bottom=-1, top=1, near=-1, far=1):
+        self.left = left
+        self.right = right
+        self.top = top
+        self.bottom = bottom
+        self.near = near
+        self.far = far
+        glMatrixMode(GL_PROJECTION)
+        glLoadIdentity()
+        glOrtho(self.left, self.right, self.bottom, self.top, self.near, self.far)
+        glMatrixMode(GL_MODELVIEW)
+        glLoadIdentity()
 
-    def mvp(self):
-        self._update_mvp()
-        return self.mvp
+    def on_resize(self, width, height):
+        self.width, self.height = width, height
 
 class Scene(object):
     def __init__(self, window):
@@ -102,19 +78,21 @@ class PauseScene(Scene):
     def __init__(self, window, prev):
         super().__init__(window)
         self.prev = prev
-        w,h = self.window.width,self.window.height
 
-        self.label = Label(window=self.window,
+        self.label = ChangeWrapper(
+                        wrapped_class=pyglet.text.Label,
                         text='PAUSED',
                         multiline=False,
                         font_name='Times New Roman',
                         bold=True,
-                        font_size=lambda win:24*win.height/win.initial_height,
-                        width=lambda win:win.width/4,
-                        x=lambda win:win.width/2,
-                        y=lambda win:win.height/2,
+                        font_size=ResizeHeightRatio(window, 24),
+                        width=ResizeWidth(window, 1 / 4),
+                        x=ResizeWidth(window, 1 / 2),
+                        y=ResizeHeight(window, 1 / 2),
                         color=(255, 255, 255, 255),
                         anchor_x='center', anchor_y='center')
+        print(self.label.width,self.label.x,self.label.y,self.label.font_size)
+
         self.batch = pyglet.graphics.Batch()
         self.batch.add(4,GL_QUADS,None,
                        ('v2f',(0,0, 1,0, 1,1, 0,1)),
@@ -140,37 +118,24 @@ class PauseScene(Scene):
         glPopMatrix()
         self.label.draw()
         
-def resize_label(obj):
-    if hasattr(obj,'init_settings'):
-        settings = obj.init_settings
-        window = settings['window']
-        iw,ih=window.initial_size
-        w,h=window.size
-        ratio = ih/h
-        for k,v in settings.items():
-            if k is 'window':
-                continue
-            if callable(v):
-                v=v(settings)
-            setattr(obj,k,v*ratio)
-            print(k,v,v*ratio)
-        
 class MainScene(Scene):
     def __init__(self, window):
         super().__init__(window)
         
         self.pause_scene = PauseScene(window,self)
-        self.label = Label(window=self.window,
-                           text='',
-                           multiline=True,
-                           font_name='Times New Roman',
-                           bold=True,
-                           font_size=lambda win:12*win.height/win.initial_height,
-                           width=lambda win:200*win.height/win.initial_height,
-                           x=0,
-                           y=lambda win:win.height,
-                           color=(255, 255, 255, 255),
-                           anchor_x='left', anchor_y='top')
+        self.label = ChangeWrapper(
+                        wrapped_class=pyglet.text.Label,
+                        text='PAUSED',
+                        multiline=False,
+                        font_name='Times New Roman',
+                        bold=True,
+                        font_size=ResizeHeightRatio(window, 12),
+                        width=ResizeHeightRatio(window, 200),
+                        x=0,
+                        y=ResizeHeight(window),
+                        color=(255, 255, 255, 255),
+                        anchor_x='left', anchor_y='top')
+        print(self.label.width, self.label.x, self.label.y, self.label.font_size)
         
         with open('res/default.vert','r') as f:
             self.vert = f.read()
@@ -237,7 +202,7 @@ class GameWindow(pyglet.window.Window):
 
         self.fps = fps
         self.elapsed_time = 0.0
-        self.camera = Camera()
+        self.camera = Camera(self)
         self.scenes = list()
         self.push_scene(MainScene(window=self))
 
